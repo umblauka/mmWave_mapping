@@ -1,0 +1,147 @@
+#!/usr/bin/env python
+# Simple Adafruit BNO055 sensor reading example.  Will print the orientation
+# and calibration data every second.
+#
+# Copyright (c) 2015 Adafruit Industries
+# Author: Tony DiCola
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+import logging
+import sys
+import time
+
+from Adafruit_BNO055 import BNO055
+
+import rospy
+import tf2_ros
+import tf
+import geometry_msgs.msg 
+from geometry_msgs.msg import Quaternion
+from sensor_msgs.msg import Imu
+from pyquaternion import Quaternion
+
+calibr1 = [244, 255, 73, 0, 227, 255, 21, 1, 113, 255, 22, 0, 254, 255, 252, 255, 255, 255, 232, 3, 235, 3]
+calibr2 = [241, 255, 71, 0, 219, 255, 22, 1, 113, 255, 21, 0, 254, 255, 252, 255, 255, 255, 232, 3, 231, 3]
+
+if __name__=='__main__':
+	rospy.init_node('transform_broadcaster')
+	br = tf2_ros.TransformBroadcaster()
+	pub = rospy.Publisher('imu0', Imu, queue_size=1)
+	# Raspberry Pi configuration with serial UART and RST connected to GPIO 18:
+	bno = BNO055.BNO055(serial_port='/dev/serial0', rst=18)
+
+	# Enable verbose debug logging if -v is passed as a parameter.
+	if len(sys.argv) == 2 and sys.argv[1].lower() == '-v':
+	    	logging.basicConfig(level=logging.DEBUG)
+
+	# Initialize the BNO055 and stop if something went wrong.
+	if not bno.begin():
+	    	raise RuntimeError('Failed to initialize BNO055! Is the sensor connected?')
+
+	# Print system status and self test result.
+	status, self_test, error = bno.get_system_status()
+	print('System status: {0}'.format(status))
+	print('Self test result (0x0F is normal): 0x{0:02X}'.format(self_test))
+	# Print out an error if system status is in error mode.
+	if status == 0x01:
+	    	print('System error: {0}'.format(error))
+    		print('See datasheet section 4.3.59 for the meaning.')
+
+	# Print BNO055 software revision and other diagnostic data.
+	sw, bl, accel, mag, gyro = bno.get_revision()
+	print('Software version:   {0}'.format(sw))
+	print('Bootloader version: {0}'.format(bl))
+	print('Accelerometer ID:   0x{0:02X}'.format(accel))
+	print('Magnetometer ID:    0x{0:02X}'.format(mag))
+	print('Gyroscope ID:       0x{0:02X}\n'.format(gyro))
+
+	print('Reading BNO055 data, press Ctrl-C to quit...')
+	sys, gyro, accel, mag = bno.get_calibration_status()
+        if gyro + accel + mag == 9:
+		print "calibrated\n"
+	else:
+		print "calibrating!!!"
+		bno.set_calibration(calibr1)
+
+	while True:
+
+		sys, gyro, accel, mag = bno.get_calibration_status()
+		#if gyro + accel + mag + sys != 12:
+			#calibr = bno.get_calibration();
+		# Print everything out.
+			#print('Sys_cal={0} Gyro_cal={1} Accel_cal={2} Mag_cal={3}'.format(sys, gyro, accel, mag))
+			#print calibr
+		# Print everything out.
+		#print('Sys_cal={0} Gyro_cal={1} Accel_cal={2} Mag_cal={3}'.format(sys, gyro, accel, mag))
+
+		# Orientation as a quaternion:
+		t = geometry_msgs.msg.TransformStamped()
+		t.header.stamp = rospy.Time.now()
+		t.header.frame_id = "odom"
+		t.child_frame_id = "base_radar_link_1"
+		t.transform.translation.x = 0
+		t.transform.translation.y = 0
+		t.transform.translation.z = 0
+		t.transform.rotation.x = 0
+		t.transform.rotation.y = 0
+		t.transform.rotation.z = 0
+		t.transform.rotation.w = 1
+		br.sendTransform(t)
+
+		x,y,z,w = bno.read_quaternion()
+
+		vx,vy,vz = bno.read_gyroscope()
+
+		ax,ay,az = bno.read_linear_acceleration()
+
+#		print x, y, z, w, vx, vy, vz, ax, ay, az
+
+		quat = Quaternion(w, x,y,z)
+		quat_norm = quat.normalised
+
+		imu_msg = Imu()
+		imu_msg.header.stamp = rospy.Time.now()
+		imu_msg.header.frame_id = "odom"
+		imu_msg.orientation.w = w	#quat_norm.elements[0]
+		imu_msg.orientation.z = z	#quat_norm.elements[1]
+		imu_msg.orientation.y = y	#quat_norm.elements[2]
+		imu_msg.orientation.x = x	#quat_norm.elements[3]
+		imu_msg.orientation_covariance = [2,0,0,
+						  0,2,0,
+						  0,0,2]
+		imu_msg.angular_velocity.x = vx
+		imu_msg.angular_velocity.y = vy
+		imu_msg.angular_velocity.z = vz
+                imu_msg.angular_velocity_covariance = 	[1,0,0, 
+                                                  	0,1,0,
+                                                  	0,0,1]
+
+		imu_msg.linear_acceleration.x = ax
+		imu_msg.linear_acceleration.y = ay
+		imu_msg.linear_acceleration.z = az
+                imu_msg.linear_acceleration_covariance = [1,0,0, 
+                                                  0,1,0,
+                                                  0,0,1]
+
+		pub.publish(imu_msg)
+		
+#		print('{0:0.2F} {1:0.2F} {2:0.2F} {3:0.2F} {4:0.2F} {5:0.2F} {6:0.2F} {7:0.2F} {8:0.2F} {9:0.2F}'.format(
+#                  x,y,z,w,vx,vy,vz,ax,ay,az))
+		time.sleep(0.1)
+

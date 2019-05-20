@@ -1,0 +1,3 @@
+<launch>
+  <node name="Test" pkg="mmWave_octomap"  type="mmWave_octomap" args="/home/user/test1.bag"/>
+</launch>
